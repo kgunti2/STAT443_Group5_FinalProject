@@ -1,0 +1,95 @@
+---
+date: "9/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+OnlineNewsPopularity <- read_csv("~/Downloads/OnlineNewsPopularity/OnlineNewsPopularity.csv", 
+    col_types = cols(url = col_skip()))
+
+onlineNews <- lm(shares ~ ., data = OnlineNewsPopularity)
+
+summary(onlineNews)
+```
+```{r}
+# Checking linearity assumption for onlineNews - the full model 
+plot(onlineNews)
+
+```
+Linearity holds. We know this because the mean residual value for every fitted value region being close to 0. In R this is indicated by the red line being close to the dashed line.
+
+Homoskedasticity might hold. The spread of residuals should be approximately the same across the x-axis.
+
+Normality does not hold. 
+
+```{r}
+cooksd <- cooks.distance(onlineNews)
+influential <- as.numeric(names(cooksd)[(cooksd > 4*mean(cooksd, na.rm=T))])  # influential row numbers
+head(influential)
+influential
+head(OnlineNewsPopularity[influential, ])
+#Below you will see the outliers and influential values determined by finding cooks distance
+
+OnlineNewsPopularity2 <- OnlineNewsPopularity[-c(271,350,411,565,970,1125),]
+
+car::outlierTest(onlineNews) #all our influential rows are extreme values according to outlier test in car built in package in R
+
+library(dplyr)
+
+```
+
+
+
+
+```{r}
+#model with significant variables according to t test
+significant_news <- lm(shares ~ abs_title_subjectivity + min_positive_polarity + global_subjectivity +  self_reference_min_shares + kw_avg_avg + kw_max_avg + kw_min_avg + kw_min_max + kw_max_min + data_channel_is_bus + data_channel_is_entertainment + data_channel_is_lifestyle + average_token_length + average_token_length + num_hrefs + num_self_hrefs + timedelta + n_tokens_title + n_tokens_content, data = OnlineNewsPopularity)
+
+#checking linearity assumption for significant_news with diagnostic plots for significant variables model
+plot(significant_news)
+```
+
+
+
+```{r}
+#transforming to log of shares
+shares_log <- lm(log(shares)~.,data = OnlineNewsPopularity, na.rm = TRUE)
+summary(shares_log)
+plot(shares_log)
+hist(OnlineNewsPopularity$shares, breaks = 300, xlim = c(0,40000), main = 'Histogram of Shares')
+hist(log(OnlineNewsPopularity$shares), main = "Histogram of Log(Shares)")
+range(OnlineNewsPopularity$shares)
+
+#step(shares_log, direction = "backward")
+```
+
+```{r}
+cooks <- cooks.distance(shares_log)
+influential1 <- as.numeric(names(cooks)[(cooks > 4*mean(cooks, na.rm=T))])  # influential row numbers
+head(influential1)
+
+plot(cooks, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4*mean(cooks, na.rm=T), col="red")  # add cutoff line
+text(x=1:length(cooks)+1, y=cooksd, labels=ifelse(cooks>4*mean(cooks, na.rm=T),names(cooks),""), col="red")  # add labels
+
+
+
+```
+
+```{r}
+range(OnlineNewsPopularity$shares)
+```
+
+
+
+
+
+
+
+
+ 
