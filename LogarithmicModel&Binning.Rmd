@@ -1,0 +1,94 @@
+---
+title: "433 Consulting Project 3"
+author: "Lauren Batiste, batiste3"
+date: "11/15/2021"
+output: html_document
+---
+
+## Binning Shares
+
+```{r}
+library(readr)
+OnlineNewsPopularity = read_csv("OnlineNewsPopularity.csv")
+
+# Remove nonpredictive variables
+library(tidyverse)
+
+#Initialize dataset and remove nonpredictors and filter for entertainment
+OnlineNewsPopularity3 = OnlineNewsPopularity %>%
+  select(-c(url,timedelta)) %>%
+  filter( data_channel_is_entertainment == 1)
+
+# Summary of shares for distribution information
+summary(OnlineNewsPopularity3$shares)
+
+# Split into 3 bins of really small, really big and the middle
+OnlineNewsPopularity3 = OnlineNewsPopularity3 %>%
+  arrange(desc(shares)) %>%
+  mutate( sharebins = as.numeric(ifelse( shares <= 500, 0, ifelse(shares >= 15000,6, 2))))
+hist(OnlineNewsPopularity3$sharebins)
+
+# Summarize the 3 way split to see the distribution of the middle group to split into 4 more groups based on quartile
+summary = OnlineNewsPopularity3 %>%
+  group_by(sharebins) %>%
+  summarize(min = min(shares),
+            q1 = quantile(shares, 0.25),
+            median = quantile(shares, 0.5),
+            q3 = quantile(shares, 0.75),
+            max = max(shares))
+
+# Reinitialize data and split into 6 categories
+OnlineNewsPopularity3 = OnlineNewsPopularity %>%
+  select(-c(url,timedelta)) %>%
+  filter( data_channel_is_entertainment == 1)
+  arrange(desc(shares)) %>%
+  mutate( sharebins = as.numeric(ifelse( shares <= 500, 0, 
+                                  ifelse(shares >= 15000,5, 
+                                  ifelse( shares >= 501 & shares <= 855, 1,
+                                  ifelse( shares >= 856 & shares <= 1200, 2,
+                                  ifelse( shares >= 1201 & shares <= 2000, 3,
+                                  4 )))))))
+  
+# Look at distributions of each bin
+OnlineNewsPopularity3 %>% count(sharebins)
+hist(OnlineNewsPopularity3$sharebins)
+```
+
+
+## Logarithmic Model
+
+```{r}
+# Upload Data
+OnlineNewsPopularity = read_csv("OnlineNewsPopularity.csv")
+
+# 
+OnlineNewsPopularityL = OnlineNewsPopularity %>%
+  select(-c(url,timedelta)) %>%
+  filter( data_channel_is_entertainment == 1)
+
+set.seed(100000)
+dt = sort(sample(nrow(OnlineNewsPopularityL), nrow(OnlineNewsPopularityL)*.75))
+train<-OnlineNewsPopularityL[dt,]
+test<-OnlineNewsPopularityL[-dt,]
+
+# Model comes from backwards step function, however, not accurate need to work on new models
+BICbinmod = glm(log(shares) ~ n_tokens_content + n_non_stop_words + n_non_stop_unique_tokens + 
+    num_hrefs + num_self_hrefs + num_imgs + average_token_length + 
+    num_keywords + data_channel_is_entertainment + data_channel_is_bus + 
+    data_channel_is_socmed + data_channel_is_tech + kw_min_min + 
+    kw_max_min + kw_avg_min + kw_min_max + kw_avg_max + kw_min_avg + 
+    kw_max_avg + kw_avg_avg + self_reference_avg_sharess + weekday_is_monday + 
+    weekday_is_tuesday + weekday_is_wednesday + weekday_is_thursday + 
+    weekday_is_friday + LDA_01 + LDA_02 + LDA_03 + LDA_04 + global_subjectivity + 
+    global_sentiment_polarity + rate_positive_words + min_positive_polarity + 
+    title_subjectivity + title_sentiment_polarity + abs_title_subjectivity, data = train)
+
+# Summary
+summary(BICbinmod)
+# Predictions
+preds = predict(BICbinmod, test)
+
+# Accuracy
+mean( test$shares == round(preds))
+```
+
