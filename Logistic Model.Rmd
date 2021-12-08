@@ -1,0 +1,114 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+```{r}
+library(readr)
+OnlineNewsPopularity = read_csv("/Users/ishanidesai/Downloads/OnlineNewsPopularity.csv")
+
+# Remove nonpredictive variables
+library(tidyverse)
+OnlineNewsPopularity = OnlineNewsPopularity %>%
+  select(-c(url,timedelta))
+
+# Filter to entertainment channel only 
+OnlineNewsPopularity = OnlineNewsPopularity %>%
+  filter( data_channel_is_entertainment == 1) 
+
+# Look at disribution of shares
+hist(OnlineNewsPopularity$shares, 
+     xlim = c(0, 10000), 
+     breaks = 5000)
+```
+
+```{r}
+# Quartiles for finding median # of shares
+summary(OnlineNewsPopularity$shares)
+```
+
+```{r}
+# Create binary variable for shares called popularity
+OnlineNewsPopularity2 = OnlineNewsPopularity %>%
+  mutate( popularity = ifelse(shares <= 1200, 0, 1))
+
+# Check number of obs. in bins, should be relatively even
+hist(OnlineNewsPopularity2$popularity)
+nrow(OnlineNewsPopularity2[OnlineNewsPopularity2$popularity == 0,])
+nrow(OnlineNewsPopularity2[OnlineNewsPopularity2$popularity == 1,])
+```
+
+```{r}
+# Create binary variable for photos called img_present
+OnlineNewsPopularity2 = OnlineNewsPopularity2 %>%
+  mutate( img_present = ifelse(num_imgs < 1, 0, 1))
+# Check number of obs. in bins, not even
+hist(OnlineNewsPopularity2$img_present)
+nrow(OnlineNewsPopularity2[OnlineNewsPopularity2$img_present == 0,])
+nrow(OnlineNewsPopularity2[OnlineNewsPopularity2$img_present == 1,])
+
+# Create binary variable for videos called video_present
+OnlineNewsPopularity2 = OnlineNewsPopularity2 %>%
+  mutate( video_present = ifelse(num_videos < 1, 0, 1))
+# Check number of obs. in bins, relatively even
+hist(OnlineNewsPopularity2$video_present)
+nrow(OnlineNewsPopularity2[OnlineNewsPopularity2$video_present == 0,])
+nrow(OnlineNewsPopularity2[OnlineNewsPopularity2$video_present == 1,])
+```
+
+```{r}
+# Remove shares, num_videos, num_imgs, and data channels since they are redundant with new binning variables
+OnlineNewsPopularity2 = OnlineNewsPopularity2 %>%
+  select(-c(shares, num_videos, num_imgs, data_channel_is_entertainment, data_channel_is_bus, data_channel_is_socmed, data_channel_is_tech, data_channel_is_world, data_channel_is_lifestyle))
+
+# Listing out column names in newly prepared data
+# ncol(OnlineNewsPopularity2)
+```
+
+```{r}
+# Create testing and training data
+OnlineNewsPopularity2 = data.frame(OnlineNewsPopularity2)
+set.seed(100000)
+dt = sort(sample(nrow(OnlineNewsPopularity2), nrow(OnlineNewsPopularity2)*.75))
+train<-OnlineNewsPopularity2[dt,] # training set, 75% of all data
+test<-OnlineNewsPopularity2[-dt,] # testing set, 25% of all data
+
+# Listing out column names in training set
+colnames(train)
+```
+
+
+```{r}
+# using glm function to fit a binomial logistic model on all the dataset variables to predict popularity, trained on previously defined training set
+
+fit <- glm(popularity~ .,data=train,family=binomial())
+summary(fit)
+```
+
+```{r}
+# using backwards variable selection to select/eliminate variables for final model
+updated_fit <- step(fit,direction="backward")
+```
+
+```{r}
+# print summary statistics of model
+summary(updated_fit)
+```
+
+```{r}
+# use model to predict popularity of articles in test set
+p <- predict(updated_fit,test,type="response")
+mean(test$popularity == round(p))
+```
+
+```{r}
+#install.packages("pROC")
+library(pROC)
+# find the AUC of model
+roc(test$popularity ~ p, plot=TRUE, print.auc = TRUE)
+```
