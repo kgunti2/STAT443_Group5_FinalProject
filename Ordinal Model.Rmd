@@ -1,0 +1,65 @@
+---
+title: "Consulting Project"
+author: "Lauren Batiste, batiste3"
+date: "9/29/2021"
+output: html_document
+---
+
+## Load Dataset
+
+```{r}
+library(readr)
+library(tidyverse)
+OnlineNewsPopularity = read_csv("OnlineNewsPopularity.csv")
+```
+
+```{r}
+#data prep - subsetting
+OnlineNewsPopularity_subset = OnlineNewsPopularity[-c(1:2)]
+OnlineNewsPopularity_subset = OnlineNewsPopularity_subset %>%
+  filter(data_channel_is_entertainment == 1)
+
+
+#addressing multicollinearity
+set.seed(10) 
+library(MASS)
+corr.mat <- round(cor(OnlineNewsPopularity_subset), 2)
+ind <- which(abs(corr.mat) >= 0.8 & corr.mat<1, arr.ind = TRUE)
+ind <- data.frame(ind) %>% group_by(col) %>% summarize(ncols = n())
+
+
+OnlineNewsPopularity_subset2 <- OnlineNewsPopularity_subset[,-ind$col]
+dim(OnlineNewsPopularity_subset)
+dim(OnlineNewsPopularity_subset2)
+
+
+OnlineNewsPopularity3 = OnlineNewsPopularity_subset2 %>%
+  arrange(shares) %>%
+  mutate(sharebins = as.numeric(ifelse( shares <= 500, 1, 
+                                ifelse( shares > 500 & shares <= 855, 2,
+                                ifelse( shares > 855 & shares <= 1200, 3,
+                                ifelse( shares > 1200 & shares <= 2000, 4,
+                                ifelse( shares > 1200 & shares <= 2000, 4,
+                                  ifelse(shares > 2000 & shares <= 15000,5, 6))))))))
+```
+
+```{r}
+# ordinal model
+set.seed(100)
+#factorizing share bins
+OnlineNewsPopularity3$sharebins <- factor(OnlineNewsPopularity3$sharebins, levels=c("1", "2", "3", "4", "5", "6"), ordered=TRUE)
+trainingRows <- sample(1:nrow(OnlineNewsPopularity3), 0.7 * nrow(OnlineNewsPopularity3))
+trainingData <- OnlineNewsPopularity3[trainingRows, ]
+testData <- OnlineNewsPopularity3[-trainingRows, ]
+      
+library(MASS)
+options(contrasts = c("contr.treatment", "contr.poly"))
+polrMod <- polr(sharebins ~ ., data=OnlineNewsPopularity3, Hess = TRUE) #error due to multicollinearity
+summary(polrMod)
+```
+
+
+
+
+
+
