@@ -1,0 +1,1162 @@
+---
+title: "Variable Exploration"
+author: "Brendan Watson"
+date: "10/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+```{r}
+library(stringr)
+library(tidyverse)
+NewsPopularity = read.csv("OnlineNewsPopularity.csv")
+tail(NewsPopularity,130)
+URL_split <- strsplit(NewsPopularity$url,"/")
+
+date_set_up <-function(year,month,day){
+  date01=paste(year,"-",month,"-",day)
+  return(date01)
+}
+
+# pull article title and date from URL
+article_name0 <- sapply(URL_split,'[',7)
+year <-as.character(sapply(URL_split,'[',4))
+month <-as.character(sapply(URL_split,'[',5))
+day <-as.character(sapply(URL_split,'[',6))
+date1 = date_set_up(year,month,day)
+date1 = as.Date(date1,"%Y - %m - %d")
+article_name00 <- str_replace_all(article_name0,"-"," ")
+article_name001 <- sapply(article_name00, length)
+
+head(NewsPopularity)
+
+# add columns for article title and Publication Date
+NewsPopularity1 <- NewsPopularity %>%
+  add_column(Article_Title=article_name00, .after="url") %>%
+  add_column(Publication_Date=date1, .after="Article_Title") 
+NewsPopularity1 <-NewsPopularity1[,-1]
+
+NewsPopularity2 <- NewsPopularity1 %>%
+    filter(n_non_stop_unique_tokens<300)
+length(NewsPopularity2$n_non_stop_words)
+length(NewsPopularity2$shares)
+head(NewsPopularity1)
+colnames(NewsPopularity1)
+nrow(NewsPopularity1)
+min(NewsPopularity1$shares)
+```
+
+```{r}
+library(tidyverse)
+#filtering the dataset to only look at the data channel entertainment
+
+
+
+#Data cleaning portion
+enter_new_pop <- NewsPopularity1 %>% 
+  filter(data_channel_is_entertainment==1) %>% # only look at the entertainment data channel
+  select(-timedelta,-Article_Title,-Publication_Date,-data_channel_is_lifestyle,-data_channel_is_bus,-data_channel_is_socmed,-data_channel_is_tech,-data_channel_is_world,-data_channel_is_entertainment,-weekday_is_monday,-weekday_is_friday,-weekday_is_thursday,-weekday_is_wednesday,-weekday_is_saturday,-weekday_is_sunday,-weekday_is_tuesday) %>% # removing a few of the variables we do not want to look at any more
+    mutate( sharebins = as.numeric(ifelse( shares <= 500, 0, 
+                                  ifelse(shares >= 15000,5, 
+                                  ifelse( shares >= 501 & shares <= 855, 1,
+                                  ifelse( shares >= 856 & shares <= 1200, 2,
+                                  ifelse( shares >= 1201 & shares <= 2000, 3,
+                                  4 )))))))
+
+enter_new_pop_2 <- enter_new_pop %>% 
+  mutate(images = ifelse(num_imgs ==0,"no images",ifelse(num_imgs>3,"over 3 images","1-3 images"))) %>% 
+  mutate(videos = ifelse(num_videos==0,"no videos",ifelse(num_videos>3,"over 3 videos","1-3 videos"))) %>% 
+  select(-num_imgs, -num_videos)
+
+
+```
+
+
+```{r}
+#plots looking at distribution of content variables
+plotting1<- function(list2){
+  namee = colnames(enter_new_pop)[list2]
+  plot(enter_new_pop[,list2],enter_new_pop$shares, xlab=namee, ylab="Shares")
+}
+head(enter_new_pop)
+sapply(1:14, plotting1)
+
+
+```
+
+
+
+```{r}
+#setup for the correlation map
+first_10 <- NewsPopularity2 %>%
+  select(shares,n_tokens_title,n_tokens_content,n_unique_tokens,n_non_stop_words,n_non_stop_unique_tokens,num_hrefs,num_self_hrefs,num_imgs,num_videos,average_token_length,num_keywords) 
+
+
+cor_tab <- round(cor(first_10),5)
+cor_tab[,1]
+(cor_tab)
+first_10_model <- lm(shares~., data = first_10)
+summary(first_10_model)
+first_10_model2 <- lm(shares~.-n_unique_tokens - n_non_stop_words, data = first_10)
+summary(first_10_model2)
+```
+
+```{r}
+#building of a correlation heat map
+
+ get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+upper_tri = get_upper_tri(cormat = cor_tab)
+library(reshape2)
+melted = melt(upper_tri,na.rm=TRUE)
+ggplot(data = melted, aes(Var2,Var1,fill=value)) +
+  geom_tile(color="white") +
+  scale_fill_gradient2(low = "blue", high="red", mid= "white", midpoint=0, limit=c(-1,1), space = "Lab") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle=90, vjust=1, size=8, hjust=1), axis.title.x = element_blank(), axis.title.y = element_blank(), plot.background = element_rect(fill="gray")) 
+  coord_fixed()
+```
+
+
+
+After looking at correlation matrix we see that the variables n_non_stop_words, n_non_stop_unique_tokens, and n_unique_tokens all have a correlation of 1. meaning we could probably remove two of the variables.
+
+
+
+```{r}
+library("randomForest")
+# tst-trn split data
+#check to look at the the first model with no variable removal
+set.seed(460)
+trn_idx = sample(nrow(enter_new_pop), size = 0.8 * nrow(enter_new_pop))
+trn = enter_new_pop[trn_idx, ]
+tst = enter_new_pop[-trn_idx, ]
+
+
+
+
+
+credit_forest = randomForest(sharebins~.-shares, data=trn, mtry= 12, ntree=500,norm.votes= TRUE )
+credit_forest$mse[length(credit_forest$mse)]
+print(credit_forest)
+
+
+
+```
+
+
+```{r}
+# set.seed(460)
+# trn_idx = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx, ]
+# tst_2 = enter_new_pop_2[-trn_idx, ]
+# 
+# 
+# 
+# colnames(trn_2)
+# 
+# # 
+# 
+# credit_forest_2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 12, ntree=300,norm.votes= TRUE )
+# credit_forest_2$mse[length(credit_forest$mse)]
+# print(credit_forest_2)
+```
+
+
+
+The code below is the random selection portion and will take a long time, so commented it out to save time.
+
+
+```{r}
+library(tidyverse)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2)
+# 
+# #remove	avg_positive_polarity	
+# ```
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-avg_positive_polarity)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2)
+# 
+# #global_rate_negative_words
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-global_rate_negative_words)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2)
+# 
+# #max_negative_polarity
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-max_negative_polarity)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2)
+# #n_non_stop_words
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-n_non_stop_words)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2)
+# #LDA_01
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-LDA_01)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2)
+# #rate_negative_words
+# ```
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-rate_negative_words)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2)
+# #average_token_length
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-average_token_length)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# #-global_subjectivity
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-global_subjectivity)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# #self_reference_max_shares
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-self_reference_max_shares)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# #images
+# #min_negative_polarity
+# ```
+# 
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-images,-min_negative_polarity)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+```
+
+
+```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>%
+#   select(-avg_negative_polarity)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+#
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+#
+#
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+#
+# check2 = check %>%
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# ```
+#
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>%
+#   select(-global_rate_positive_words)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+#
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+#
+#
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+#
+# check2 = check %>%
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# ```
+#
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>%
+#   select(-kw_avg_min)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+#
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+#
+#
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+#
+# check2 = check %>%
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# ```
+#
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>%
+#   select(-min_positive_polarity)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+#
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+#
+#
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+#
+# check2 = check %>%
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# #kw_min_max
+# ```
+#
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>%
+#   select(-kw_min_max)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+#
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+#
+#
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+#
+# check2 = check %>%
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+# ```
+#
+# ```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>%
+#   select(-n_non_stop_unique_tokens)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+#
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+#
+#
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+#
+# check2 = check %>%
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+```
+
+
+
+```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-self_reference_avg_sharess)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+```
+
+
+
+
+
+```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-rate_positive_words)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+```
+
+```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-title_sentiment_polarity)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+```
+
+
+```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-kw_max_max)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+```
+
+```{r}
+# enter_new_pop_2<- enter_new_pop_2 %>% 
+#   select(-num_keywords)
+# final_media <- enter_new_pop_2 %>% 
+#   select(-avg_positive_polarity,-avg_positive_polarity,-global_rate_negative_words,-max_negative_polarity,-n_non_stop_words,-LDA_01,-rate_negative_words,-average_token_length,-global_subjectivity,-rate_positive_words,-self_reference_max_shares,-min_negative_polarity,-global_rate_positive_words,-kw_avg_min,-min_positive_polarity,-n_non_stop_unique_tokens,-kw_min_max,-num_keywords,-kw_max_max,-title_sentiment_polarity,-rate_positive_words,-n_non_stop_unique_tokens,-self_reference_avg_sharess)
+# library(randomForest)
+# library(tidyverse)
+# set.seed(460)
+# trn_idx_2 = sample(nrow(enter_new_pop_2), size = 0.8 * nrow(enter_new_pop_2))
+# trn_2 = enter_new_pop_2[trn_idx_2, ]
+# tst_2 = enter_new_pop_2[-trn_idx_2, ]
+# 
+# accuracy_tst = c()
+# accuracy_trn = c()
+# names1 =c()
+# namey = colnames(trn_2)
+# 
+# 
+# for(col1 in 1:length(namey)){
+#   if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+#     mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+#     names1 = append(names1,namey[col1])
+#     accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+#     accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+#     } else if (namey[col1]=="shares") {
+#       mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+#       names1 = append(names1,"current model")
+#       accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+#       accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+#     }
+# }
+# check =data.frame(names1,accuracy_trn,accuracy_tst)
+# 
+# check2 = check %>% 
+#    arrange(desc(accuracy_tst))
+# head(check2,40)
+```
+
+
+
+
+```{r}
+
+#variables removed after backward selection
+enter_new_pop_3<- enter_new_pop_2 %>%
+  select(-avg_positive_polarity,-avg_positive_polarity,-global_rate_negative_words,-max_negative_polarity,-n_non_stop_words,-LDA_01,-rate_negative_words,-average_token_length,-global_subjectivity,-rate_positive_words,-self_reference_max_shares,-min_negative_polarity,-global_rate_positive_words,-kw_avg_min,-min_positive_polarity,-n_non_stop_unique_tokens,-kw_min_max,-num_keywords,-kw_max_max,-title_sentiment_polarity,-rate_positive_words,-n_non_stop_unique_tokens,-self_reference_avg_sharess,-weekday_is_monday,-weekday_is_friday,-weekday_is_thursday,-weekday_is_wednesday,-weekday_is_saturday,-weekday_is_sunday,-weekday_is_tuesday,-images )
+set.seed(460)
+trn_idx_2 = sample(nrow(enter_new_pop_3), size = 0.8 * nrow(enter_new_pop_3))
+trn_2 = enter_new_pop_3[trn_idx_2, ]
+tst_2 = enter_new_pop_3[-trn_idx_2, ]
+
+accuracy_tst = c()
+accuracy_trn = c()
+names1 =c()
+namey = colnames(trn_2)
+
+
+for(col1 in 1:length(namey)){
+  if(namey[col1]!="shares" & namey[col1]!="sharebins" ){
+    mod1 = randomForest(sharebins~.-shares, data=trn_2[,-col1], mtry= 8, ntree=100,norm.votes= TRUE )
+    names1 = append(names1,namey[col1])
+    accuracy_tst = append(accuracy_tst,mean(round(predict(mod1,tst_2))==tst_2$sharebins))
+    accuracy_trn = append(accuracy_trn,mean(round(predict(mod1,trn_2))==trn_2$sharebins))
+    } else if (namey[col1]=="shares") {
+      mod2 = randomForest(sharebins~.-shares, data=trn_2, mtry= 8, ntree=100,norm.votes= TRUE )
+      names1 = append(names1,"current model")
+      accuracy_tst = append(accuracy_tst,mean(round(predict(mod2,tst_2))==tst_2$sharebins))
+      accuracy_trn = append(accuracy_trn,mean(round(predict(mod2,trn_2))==trn_2$sharebins))
+    }
+}
+check =data.frame(names1,accuracy_trn,accuracy_tst)
+
+check2 = check %>%
+   arrange(desc(accuracy_tst),accuracy_trn)
+head(check2,40)
+```
+
+
+**Variables eliminated though the process avg_positive_polarity,global_rate_negative_words,max_negative_polarity,n_non_stop_words,LDA01,rate_negative_words,average_token_length,global_subjectivity,rate_positive_words,self_reference_max_shares,images,min_negative_polarity,global_rate_positive_words,kw_avg_min,min_positive_polarity,n_non_stop_unique_tokens,kw_min_max,num_keywords,kw_max_max,title_sentiment_polarity,rate_positive_words,n_non_stop_unique_tokens,self_reference_avg_sharess**
+
+```{r}
+final_media <- enter_new_pop_2 %>% 
+  select(-avg_positive_polarity,-avg_positive_polarity,-global_rate_negative_words,-max_negative_polarity,-n_non_stop_words,-LDA_01,-rate_negative_words,-average_token_length,-global_subjectivity,-rate_positive_words,-self_reference_max_shares,-min_negative_polarity,-global_rate_positive_words,-kw_avg_min,-min_positive_polarity,-n_non_stop_unique_tokens,-kw_min_max,-num_keywords,-kw_max_max,-title_sentiment_polarity,-rate_positive_words,-n_non_stop_unique_tokens,-self_reference_avg_sharess,-images,-weekday_is_monday,-weekday_is_friday,-weekday_is_thursday,-weekday_is_wednesday,-weekday_is_saturday,-weekday_is_sunday,-weekday_is_tuesday)
+all_shares = sort(final_media$shares)
+len = length(all_shares)
+summary(final_media$shares)
+split_3=split(all_shares,ceiling(seq_along(all_shares)/(len/3)))
+split_5=split(all_shares,ceiling(seq_along(all_shares)/(len/5)))
+split_7=split(all_shares,ceiling(seq_along(all_shares)/(len/7)))
+split_8=split(all_shares,ceiling(seq_along(all_shares)/(len/8)))
+
+```
+
+
+```{r}
+set.seed(460)
+
+
+
+shares_2_bin <- final_media %>% 
+   mutate(sharebins = ifelse(shares>1200,1,0))
+shares_4_bin <- final_media %>% 
+  mutate(sharebins = ifelse(shares<=833,0,ifelse(shares<=1200,1,ifelse(shares<=2100,2,3)) ))
+shares_3_bin <-final_media %>% 
+  mutate(sharebins= ifelse(shares<split_3$`2`[1],0,ifelse(shares<split_3$`3`[1],1,2)))
+shares_5_bin <-final_media %>% 
+  mutate(sharebins= ifelse(shares<split_5$`2`[1],0,ifelse(shares<split_5$`3`[1],1,ifelse(shares<split_5$`4`[1],2, ifelse(shares<=split_5$`5`[1],3,4)))))
+shares_7_bin <-final_media %>% 
+  mutate(sharebins= ifelse(shares<split_7$`2`[1],0,ifelse(shares<split_7$`3`[1],1,ifelse(shares<split_7$`4`[1],2, ifelse(shares<split_7$`5`[1],3,ifelse(shares<split_7$`6`[1],4,ifelse(shares<split_7$`7`[1],5,6)))))))
+shares_8_bin <-final_media %>% 
+  mutate(sharebins= ifelse(shares<split_8$`2`[1],0,ifelse(shares<split_8$`3`[1],1,ifelse(shares<split_8$`4`[1],2, ifelse(shares<split_8$`5`[1],3,ifelse(shares<split_8$`6`[1],4,ifelse(shares<split_8$`7`[1],5,ifelse(shares<split_8$`8`[1],6,7))))))))
+
+
+```
+
+```{r}
+set.seed(460)
+trn_idx_bin = sample(nrow(final_media), size = 0.8 * nrow(final_media))
+trn_bin_6 = final_media[trn_idx_bin, ]
+tst_bin_6 = final_media[-trn_idx_bin, ]
+trn_bin_2 = shares_2_bin[trn_idx_bin,]
+tst_bin_2 = shares_2_bin[-trn_idx_bin,]
+trn_bin_4 = shares_4_bin[trn_idx_bin,]
+tst_bin_4 = shares_4_bin[-trn_idx_bin,]
+trn_bin_3 = shares_3_bin[trn_idx_bin,]
+tst_bin_3 = shares_3_bin[-trn_idx_bin,]
+trn_bin_5 = shares_5_bin[trn_idx_bin,]
+tst_bin_5 = shares_5_bin[-trn_idx_bin,]
+trn_bin_7 = shares_7_bin[trn_idx_bin,]
+tst_bin_7 = shares_7_bin[-trn_idx_bin,]
+trn_bin_8 = shares_8_bin[trn_idx_bin,]
+tst_bin_8 = shares_8_bin[-trn_idx_bin,]
+
+
+shares_6_bin_mod <- randomForest(sharebins~.-shares, data=trn_bin_6, mtry= 12, ntree=500,norm.votes= TRUE )
+shares_2_bin_mod <- randomForest(sharebins~.-shares, data= trn_bin_2, mtry= 12, ntree=500,norm.votes= TRUE )
+shares_4_bin_mod <-randomForest(sharebins~.-shares, data= trn_bin_4, mtry= 12, ntree=500,norm.votes= TRUE )
+shares_3_bin_mod <-randomForest(sharebins~.-shares, data= trn_bin_3, mtry= 12, ntree=500,norm.votes= TRUE )
+shares_5_bin_mod <-randomForest(sharebins~.-shares, data= trn_bin_5, mtry= 12, ntree=500,norm.votes= TRUE )
+shares_7_bin_mod <-randomForest(sharebins~.-shares, data= trn_bin_7, mtry= 12, ntree=500,norm.votes= TRUE )
+shares_8_bin_mod <-randomForest(sharebins~.-shares, data=trn_bin_8, mtry= 12, ntree=500,norm.votes= TRUE )
+```
+
+```{r}
+importance(shares_6_bin_mod)
+```
+
+```{r}
+set.seed(460)
+all_train_correct<-c()
+all_test_correct<-c()
+all_test_close<-c()
+number_bins = seq(2,8,by=1)
+statss <- function(mod,trn,tst){
+  all_train_correct<- append(all_train_correct,mean(round(predict(mod,trn))==trn$sharebins))
+  all_test_correct<- append(all_test_correct,mean(round(predict(mod,tst))==tst$sharebins))
+  all_test_close<- append(all_test_close,mean(round(predict(mod,tst))==tst$sharebins | round(predict(mod,tst))+1==tst$sharebins |round(predict(mod,tst))-1==tst$sharebins ))
+  final_list= list(trn=all_train_correct[1],tst_co=all_test_correct, tst_cl=all_test_close)
+  return(final_list)
+}
+list2 = statss(shares_2_bin_mod,trn_bin_2,tst_bin_2)
+list3 =statss(shares_3_bin_mod,trn_bin_3,tst_bin_3)
+list4 =statss(shares_4_bin_mod,trn_bin_4,tst_bin_4)
+list5 =statss(shares_5_bin_mod,trn_bin_5,tst_bin_5)
+list6 =statss(shares_6_bin_mod,trn_bin_6,tst_bin_6)
+list7 =statss(shares_7_bin_mod,trn_bin_7,tst_bin_7)
+list8 = statss(shares_8_bin_mod,trn_bin_8,tst_bin_8)
+
+all_train_correct<-c(list2$trn,list3$trn,list4$trn,list5$trn,list6$trn,list7$trn,list8$trn)
+all_test_correct<-c(list2$tst_co,list3$tst_co,list4$tst_co,list5$tst_co,list6$tst_co,list7$tst_co,list8$tst_co)
+all_test_close<-c(list2$tst_cl,list3$tst_cl,list4$tst_cl,list5$tst_cl,list6$tst_cl,list7$tst_cl,list8$tst_cl)
+bin_data = data.frame(number_bins,all_train_correct,all_test_correct,all_test_close)
+(bin_data)
+```
+
+```{r}
+library(ggplot2)
+
+colors3 <- c("Train Accuracy" ="dodgerblue", "Test Accuracy"= "darkgreen", "Test Accuarcy within one bin" ="maroon")
+
+ggplot(bin_data, aes(x=number_bins), ylab="Accuary") +
+  geom_point(aes(y=all_train_correct, color= "Train Accuracy"),pch=15)+
+  geom_point(aes(y=all_test_correct,color = "Test Accuracy"),pch=16) +
+  geom_point(aes(y=all_test_close, color="Test Accuarcy within one bin"),pch=17) +
+  geom_line(aes(y=all_train_correct,color="Train Accuracy")) +
+  geom_line(aes(y=all_test_correct, color= "Test Accuracy")) +
+  geom_line(aes(y=all_test_close, color= "Test Accuarcy within one bin"))+
+  labs(y="accuracy", x="number of bins", color="Type of Accuracy")+
+  ylim(0,1)+
+  ggtitle("Accuracy By Number of Share Bins for Random Forest")+
+  theme(plot.title = element_text(hjust=.5))+
+  scale_color_manual(values=colors3)
+```
+
+
+
+
+```{r}
+paste("train correctness:",mean(round(predict(credit_forest_2,trn_2))==trn_2$sharebins))
+paste("test data correctness:",mean(round(predict(credit_forest_2,tst_2))==tst_2$sharebins))
+
+coerced_preds = as.numeric(as.character(predict(credit_forest_2, tst_2, type = "response")))
+
+test_rmse = sqrt(mean((coerced_preds - tst_2$sharebins) ^ 2))
+
+
+#summary(credit_forest)
+
+ho = importance(credit_forest_2)
+nrow(ho)
+ho
+mean(round(predict(credit_forest_2,trn_2))==trn_2$sharebins)
+mean(round(predict(credit_forest_2,tst_2))==tst_2$sharebins) * nrow(tst_2)
+
+#highest .276912
+#highest  test = .2790368 train = .65562444
+```
+
+
+```{r}
+#FYI this will take a long time to run
+#testing what mtry had the best prediction accuracy
+mtry_correct <- c()
+determine_mtry <- function(mtry6){
+  media_forest2 <- randomForest(sharebins~.-shares, data=trn, mtry= mtry6, ntree=600 )
+  return(mean(round(predict(media_forest2,tst))==tst$sharebins))
+  
+}
+correctness_mtry <- sapply(1:20,determine_mtry)
+correctness_mtry
+```
+
+
+
+```{r}
+
+#testing what tree size had the best prediction accuracy
+tree_numbers <- c(10,50,100,200,400,500,600,800,1000)
+
+determine_ntrees<- function(ntree3){
+  media_forest3 <- randomForest(sharebins~.-shares, data=trn, mtry= 7, ntree=ntree3 )
+  return(mean(round(predict(media_forest3,tst))==tst$sharebins))
+}
+
+correctness_ntrees <-sapply(tree_numbers, determine_ntrees)
+correctness_ntrees
+```
+
+
+
